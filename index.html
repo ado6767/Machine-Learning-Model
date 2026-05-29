@@ -1,69 +1,85 @@
 <div>Teachable Machine Image Model</div>
-<label for="model-selector">Select your 3 downloaded model files (model.json, metadata.json, weights.bin):</label>
-<input type="file" id="model-selector" multiple accept=".json,.bin">
+<label for="model-selector">Select your downloaded Teachable Machine ZIP file:</label>
+<input type="file" id="model-selector" accept=".zip">
 
 <br><br>
 <button type="button" onclick="init()">Start</button>
 <div id="webcam-container"></div>
 <div id="label-container"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
 <script type="text/javascript">
     let model, webcam, labelContainer, maxPredictions;
 
-    // Load the image model and setup the webcam
+    // Helper function to convert JSZip data into a standard File object Teachable Machine expects
+    async function zipFileToFileObject(zip, fileName, mimeType) {
+        const zipEntry = zip.file(fileName);
+        if (!zipEntry) return null;
+        const blob = await zipEntry.async("blob");
+        return new File([blob], fileName, { type: mimeType });
+    }
+
     async function init() {
         const fileInput = document.getElementById('model-selector');
         
-        // Ensure the user actually selected files
-        if (fileInput.files.length < 3) {
-            alert("Please select all 3 exported files: model.json, metadata.json, and weights.bin");
+        if (fileInput.files.length === 0) {
+            alert("Please select your model.zip file first.");
             return;
         }
 
-        // Find the specific files within the selection
-        let modelFile, weightsFile, metadataFile;
-        for (let file of fileInput.files) {
-            if (file.name === "model.json") modelFile = file;
-            else if (file.name === "weights.bin") weightsFile = file;
-            else if (file.name === "metadata.json") metadataFile = file;
-        }
+        const zipFile = fileInput.files[0];
 
-        if (!modelFile || !weightsFile || !metadataFile) {
-            alert("Could not find all required files. Make sure they are named correctly.");
+        try {
+            // 2. Load and unzip the file in the browser memory
+            const jszip = new JSZip();
+            const unzippedFolder = await jszip.loadAsync(zipFile);
+
+            // Convert internal zip files into File Objects
+            const modelFile = await zipFileToFileObject(unzippedFolder, "model.json", "application/json");
+            const weightsFile = await zipFileToFileObject(unzippedFolder, "weights.bin", "application/octet-stream");
+            const metadataFile = await zipFileToFileObject(unzippedFolder, "metadata.json", "application/json");
+
+            if (!modelFile || !weightsFile || !metadataFile) {
+                alert("The zip file doesn't seem to contain the required model.json, weights.bin, and metadata.json files.");
+                return;
+            }
+
+            // 3. Load the converted files into Teachable Machine
+            model = await tmImage.loadFromFiles(modelFile, weightsFile, metadataFile);
+            maxPredictions = model.getTotalClasses();
+
+        } catch (error) {
+            console.error(error);
+            alert("Error reading the zip file. Make sure it is a valid Teachable Machine export zip.");
             return;
         }
 
-        // 2. Use loadFromFiles instead of tmImage.load
-        model = await tmImage.loadFromFiles(modelFile, weightsFile, metadataFile);
-        maxPredictions = model.getTotalClasses();
-
-        // Convenience function to setup a webcam
-        const flip = true; // whether to flip the webcam
-        webcam = new tmImage.Webcam(200, 200, flip); // width, height, flip
-        await webcam.setup(); // request access to the webcam
+        // Setup the webcam (Same as original)
+        const flip = true; 
+        webcam = new tmImage.Webcam(200, 200, flip); 
+        await webcam.setup(); 
         await webcam.play();
         window.requestAnimationFrame(loop);
 
-        // append elements to the DOM
-        document.getElementById("webcam-container").innerHTML = ""; // Clear previous canvas if any
+        document.getElementById("webcam-container").innerHTML = ""; 
         document.getElementById("webcam-container").appendChild(webcam.canvas);
         
         labelContainer = document.getElementById("label-container");
-        labelContainer.innerHTML = ""; // Clear previous labels
-        for (let i = 0; i < maxPredictions; i++) { // and class labels
+        labelContainer.innerHTML = ""; 
+        for (let i = 0; i < maxPredictions; i++) { 
             labelContainer.appendChild(document.createElement("div"));
         }
     }
 
     async function loop() {
-        webcam.update(); // update the webcam frame
+        webcam.update(); 
         await predict();
         window.requestAnimationFrame(loop);
     }
 
-    // run the webcam image through the image model
     async function predict() {
         const prediction = await model.predict(webcam.canvas);
         for (let i = 0; i < maxPredictions; i++) {
